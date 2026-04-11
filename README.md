@@ -7,12 +7,13 @@ A desktop app to share a selected folder over your local network. Any phone or d
 - PyQt5 desktop GUI
 - Flask server running in a background thread
 - Folder browsing and download from mobile browser
-- File upload with progress bar
+- Multi-file and folder upload with progress bar
 - QR code for instant mobile access
 - LAN IP auto-detection
 - Path traversal protection
 - Sanitized upload filenames
 - Optional delete password
+- Optional download password
 - Large file friendly streaming upload/download
 
 ## Project Structure
@@ -41,10 +42,12 @@ python app.py
 1. Click **Select Folder** and choose the folder to share.
 2. Keep default port `8000` or change it.
 3. Optionally set a delete password.
-4. Click **Start Sharing**.
-5. Scan the QR code with your phone or open the displayed URL in browser.
+4. Optionally set a download password.
+5. Click **Start Sharing**.
+6. Scan the QR code with your phone or open the displayed URL in browser.
 
 Uploads are saved in the currently browsed folder under the selected root.
+For folder upload, directory structure is preserved relative to the selected folder upload root.
 
 ## Build Single EXE (PyInstaller)
 

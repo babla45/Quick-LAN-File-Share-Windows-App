@@ -1,5 +1,7 @@
+import json
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 
 import qrcode
 from PyQt5.QtCore import QObject, Qt, pyqtSignal
@@ -12,6 +14,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QComboBox,
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -32,12 +35,14 @@ class LogEmitter(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LAN Folder Share")
+        self.setWindowTitle("Quick LAN Folder Share developped by      { Md. Babla Islam } ")
         self.setMinimumSize(860, 620)
 
         self.server = SharedFolderServer()
         self.local_ip = detect_local_ip()
         self.selected_folder = ""
+        self.config_path = Path.home() / ".lan_folder_share_config.json"
+        self.recent_folders = self._load_recent_folders()
 
         self.log_emitter = LogEmitter()
         self.log_emitter.message.connect(self.append_log)
@@ -54,22 +59,36 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(12, 12, 12, 12)
         root_layout.setSpacing(10)
 
-        header = QLabel("Share a local folder to any phone on your LAN")
-        header.setStyleSheet("font-size: 18px; font-weight: 600;")
-        root_layout.addWidget(header)
-
         folder_group = QGroupBox("Shared Folder")
-        folder_layout = QHBoxLayout(folder_group)
+        folder_layout = QVBoxLayout(folder_group)
         self.path_label = QLabel("No folder selected")
         self.path_label.setWordWrap(True)
         self.path_label.setStyleSheet("padding: 6px; border: 1px solid #d9d9d9; border-radius: 6px;")
 
-        select_btn = QPushButton("Select Folder")
+        picker_row = QHBoxLayout()
+        self.recent_folder_combo = QComboBox()
+        self.recent_folder_combo.setMinimumWidth(520)
+        self.recent_folder_combo.addItems(self.recent_folders)
+        self.recent_folder_combo.setEnabled(bool(self.recent_folders))
+
+        self.use_last_btn = QPushButton("Use Selected Saved Folder")
+        self.use_last_btn.clicked.connect(self.use_selected_history_folder)
+        self.use_last_btn.setEnabled(bool(self.recent_folders))
+
+        select_btn = QPushButton("Select New Folder")
         select_btn.clicked.connect(self.select_folder)
 
-        folder_layout.addWidget(self.path_label, stretch=1)
-        folder_layout.addWidget(select_btn)
+        picker_row.addWidget(self.recent_folder_combo, stretch=1)
+        picker_row.addWidget(self.use_last_btn)
+        picker_row.addWidget(select_btn)
+
+        folder_layout.addWidget(self.path_label)
+        folder_layout.addLayout(picker_row)
         root_layout.addWidget(folder_group)
+
+        if self.recent_folders:
+            self.selected_folder = self.recent_folders[0]
+            self.path_label.setText(self.selected_folder)
 
         net_group = QGroupBox("Network")
         net_layout = QFormLayout(net_group)
@@ -87,10 +106,15 @@ class MainWindow(QMainWindow):
         self.delete_password_input.setPlaceholderText("Optional password required for delete action")
         self.delete_password_input.setEchoMode(QLineEdit.Password)
 
+        self.download_password_input = QLineEdit()
+        self.download_password_input.setPlaceholderText("Optional password required for file download")
+        self.download_password_input.setEchoMode(QLineEdit.Password)
+
         net_layout.addRow("Local IP:", self.ip_value)
         net_layout.addRow("Port:", self.port_input)
         net_layout.addRow("URL:", self.url_value)
         net_layout.addRow("Delete Password (optional):", self.delete_password_input)
+        net_layout.addRow("Download Password (optional):", self.download_password_input)
         root_layout.addWidget(net_group)
 
         controls_group = QGroupBox("Controls")
@@ -133,6 +157,9 @@ class MainWindow(QMainWindow):
 
         root_layout.addLayout(bottom_layout)
 
+        if self.selected_folder:
+            self.append_log(f"Loaded last folder: {self.selected_folder}")
+
     def refresh_url(self):
         self.local_ip = detect_local_ip()
         self.ip_value.setText(self.local_ip)
@@ -162,11 +189,54 @@ class MainWindow(QMainWindow):
     def _log_from_server(self, message: str):
         self.log_emitter.message.emit(message)
 
+    def _load_recent_folders(self):
+        try:
+            if not self.config_path.exists():
+                return []
+            data = json.loads(self.config_path.read_text(encoding="utf-8"))
+            folders = data.get("recent_folders", [])
+            valid_folders = [item for item in folders if isinstance(item, str) and item.strip()]
+            return valid_folders[:8]
+        except Exception:
+            return []
+
+    def _save_recent_folders(self):
+        data = {"recent_folders": self.recent_folders[:8]}
+        self.config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def _add_recent_folder(self, folder: str):
+        normalized = str(Path(folder))
+        self.recent_folders = [item for item in self.recent_folders if Path(item) != Path(normalized)]
+        self.recent_folders.insert(0, normalized)
+        self.recent_folders = self.recent_folders[:8]
+        self._save_recent_folders()
+        self.recent_folder_combo.clear()
+        self.recent_folder_combo.addItems(self.recent_folders)
+        self.recent_folder_combo.setEnabled(True)
+        self.use_last_btn.setEnabled(True)
+
+    def use_selected_history_folder(self):
+        folder = self.recent_folder_combo.currentText().strip()
+        if not folder:
+            QMessageBox.information(self, "No Saved Folder", "No saved folder is available yet.")
+            return
+
+        if not Path(folder).is_dir():
+            QMessageBox.warning(self, "Folder Missing", "Saved folder does not exist anymore. Please select a new one.")
+            self.append_log(f"Saved folder missing: {folder}")
+            return
+
+        self.selected_folder = folder
+        self.path_label.setText(folder)
+        self._add_recent_folder(folder)
+        self.append_log(f"Using saved folder: {folder}")
+
     def select_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select folder to share")
         if folder:
             self.selected_folder = folder
             self.path_label.setText(folder)
+            self._add_recent_folder(folder)
             self.append_log(f"Selected folder: {folder}")
 
     def _show_qr(self, url: str):
@@ -199,6 +269,7 @@ class MainWindow(QMainWindow):
             self.server.start(
                 folder_path=self.selected_folder,
                 delete_password=self.delete_password_input.text().strip(),
+                download_password=self.download_password_input.text().strip(),
                 log_callback=self._log_from_server,
             )
         except Exception as exc:

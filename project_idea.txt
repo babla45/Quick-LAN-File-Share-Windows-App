@@ -29,7 +29,7 @@ CORE FEATURES:
 * Clean, mobile-friendly HTML UI
 * Features:
 
-  * Upload file button
+  * Upload files button
   * List of files and folders
   * Click to download files
   * Navigate directories
@@ -93,6 +93,7 @@ IMPORTANT:
 * No mobile app required
 * Must work fully offline within same network
 * UI should be simple, clean, and responsive for mobile browsers
+* Multiple files and folders should be supported
 
 
 PyInstaller command:

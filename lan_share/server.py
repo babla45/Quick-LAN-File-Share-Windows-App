@@ -76,8 +76,17 @@ BROWSE_TEMPLATE = """
     }
     form.upload {
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr 1fr auto;
       gap: 8px;
+    }
+    .upload-field {
+      display: grid;
+      gap: 4px;
+    }
+    .upload-label {
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: 600;
     }
     input[type="file"] {
       width: 100%;
@@ -97,6 +106,13 @@ BROWSE_TEMPLATE = """
       font-weight: 600;
       font-size: 0.92rem;
       transition: background 160ms ease;
+    }
+    .toolbar .btn,
+    .toolbar button[type="submit"] {
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 0.86rem;
+      align-self: end;
     }
     button:hover, .btn:hover { background: var(--accent-2); }
     .progress-wrap {
@@ -138,6 +154,22 @@ BROWSE_TEMPLATE = """
       gap: 6px;
       align-items: center;
     }
+    .download {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      margin-right: 8px;
+    }
+    .download input {
+      width: 130px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 0.85rem;
+    }
+    .download button {
+      background: #1f7a4f;
+    }
     .delete input {
       width: 130px;
       border: 1px solid var(--line);
@@ -176,7 +208,14 @@ BROWSE_TEMPLATE = """
 
       <form id="uploadForm" class="upload" method="post" action="{{ url_for('upload_file') }}" enctype="multipart/form-data">
         <input type="hidden" name="target" value="{{ current_rel }}" />
-        <input type="file" id="fileInput" name="file" required />
+        <label class="upload-field" for="fileInput">
+          <span class="upload-label"> Upload Files Here</span>
+          <input type="file" id="fileInput" name="files" multiple />
+        </label>
+        <label class="upload-field" for="folderInput">
+          <span class="upload-label"> Upload Folder Here</span>
+          <input type="file" id="folderInput" name="files" webkitdirectory directory multiple />
+        </label>
         <button type="submit">Upload</button>
       </form>
       <div id="progressWrap" class="progress-wrap">
@@ -212,12 +251,19 @@ BROWSE_TEMPLATE = """
                 {% if item.is_dir %}
                   <a href="{{ url_for('browse', subpath=item.rel_path) }}"><span class="name">{{ item.name }}/</span></a>
                 {% else %}
-                  <a href="{{ url_for('download_file', relpath=item.rel_path) }}"><span class="name">{{ item.name }}</span></a>
+                  <span class="name">{{ item.name }}</span>
                 {% endif %}
               </td>
               <td class="muted">{{ 'Folder' if item.is_dir else 'File' }}</td>
               <td class="muted">{{ item.size_display }}</td>
               <td>
+                {% if not item.is_dir %}
+                  <form class="download" method="post" action="{{ url_for('download_file_post') }}">
+                    <input type="hidden" name="target" value="{{ item.rel_path }}" />
+                    <input type="password" name="password" placeholder="Download password" />
+                    <button type="submit">Download</button>
+                  </form>
+                {% endif %}
                 <form class="delete" method="post" action="{{ url_for('delete_item') }}" onsubmit="return confirm('Delete ' + {{ item.name|tojson }} + '?');">
                   <input type="hidden" name="target" value="{{ item.rel_path }}" />
                   <input type="hidden" name="return_to" value="{{ current_rel }}" />
@@ -245,7 +291,8 @@ BROWSE_TEMPLATE = """
     uploadForm.addEventListener('submit', function (event) {
       event.preventDefault();
       const fileInput = document.getElementById('fileInput');
-      if (!fileInput.files.length) {
+      const folderInput = document.getElementById('folderInput');
+      if (!fileInput.files.length && !folderInput.files.length) {
         return;
       }
 
@@ -338,6 +385,7 @@ class SharedFolderServer:
         self.port = port
         self.root_dir = None
         self.delete_password = ""
+        self.download_password = ""
         self._app = None
         self._thread = None
         self._log_callback = lambda _msg: None
@@ -368,6 +416,43 @@ class SharedFolderServer:
                 if not chunk:
                     break
                 output.write(chunk)
+
+    def _sanitize_relative_upload_path(self, raw_name: str) -> Path | None:
+        normalized = (raw_name or "").replace("\\", "/").strip("/")
+        if not normalized:
+            return None
+
+        safe_parts = []
+        for segment in normalized.split("/"):
+            if segment in ("", "."):
+                continue
+            if segment == "..":
+                return None
+            safe_segment = secure_filename(segment)
+            if not safe_segment:
+                continue
+            safe_parts.append(safe_segment)
+
+        if not safe_parts:
+            return None
+        return Path(*safe_parts)
+
+    def _unique_destination_path(self, destination: Path) -> Path:
+        if not destination.exists():
+            return destination
+
+        stem = destination.stem
+        suffix = destination.suffix
+        counter = 1
+        while destination.exists():
+            destination = destination.with_name(f"{stem}_{counter}{suffix}")
+            counter += 1
+        return destination
+
+    def _is_download_password_valid(self, provided_password: str) -> bool:
+        if not self.download_password:
+            return True
+        return provided_password == self.download_password
 
     def _ensure_port_available(self):
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -439,33 +524,80 @@ class SharedFolderServer:
                 flash("Invalid target folder")
                 return redirect(url_for("browse", subpath=""))
 
-            upload = request.files.get("file")
-            if upload is None or upload.filename is None or upload.filename.strip() == "":
-                flash("No file selected")
+            uploads = [
+                item
+                for item in request.files.getlist("files")
+                if item is not None and item.filename is not None and item.filename.strip() != ""
+            ]
+            if not uploads:
+                flash("No files selected")
                 return redirect(url_for("browse", subpath=target))
 
-            safe_name = secure_filename(Path(upload.filename).name)
-            if not safe_name:
-                flash("Invalid file name")
-                return redirect(url_for("browse", subpath=target))
+            uploaded_count = 0
+            skipped_count = 0
+            target_root = destination_dir.resolve()
 
-            destination = destination_dir / safe_name
-            if destination.exists():
-                stem = destination.stem
-                suffix = destination.suffix
-                counter = 1
-                while destination.exists():
-                    destination = destination_dir / f"{stem}_{counter}{suffix}"
-                    counter += 1
+            for upload in uploads:
+                rel_upload_path = self._sanitize_relative_upload_path(upload.filename)
+                if rel_upload_path is None:
+                    skipped_count += 1
+                    self._log(f"Skipped unsafe upload name: {upload.filename}")
+                    continue
 
-            self._stream_to_disk(upload, destination)
-            size_text = format_size(destination.stat().st_size)
-            self._log(f"Uploaded: {destination.name} ({size_text})")
-            flash(f"Uploaded {destination.name}")
+                destination = (target_root / rel_upload_path).resolve()
+                if destination != target_root and target_root not in destination.parents:
+                    skipped_count += 1
+                    self._log(f"Blocked traversal upload: {upload.filename}")
+                    continue
+
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination = self._unique_destination_path(destination)
+
+                self._stream_to_disk(upload, destination)
+                size_text = format_size(destination.stat().st_size)
+                relative_saved_path = destination.relative_to(Path(self.root_dir).resolve()).as_posix()
+                self._log(f"Uploaded: {relative_saved_path} ({size_text})")
+                uploaded_count += 1
+
+            if uploaded_count == 0:
+                flash("No valid files were uploaded")
+            elif skipped_count > 0:
+                flash(f"Uploaded {uploaded_count} file(s), skipped {skipped_count} unsafe/invalid item(s)")
+            else:
+                flash(f"Uploaded {uploaded_count} file(s)")
+
             return redirect(url_for("browse", subpath=target))
 
         @app.route("/download/<path:relpath>")
         def download_file(relpath: str):
+            provided = request.args.get("password", "")
+            if not self._is_download_password_valid(provided):
+                abort(403)
+
+            try:
+                file_path = self._resolve_inside_root(relpath)
+            except PermissionError:
+                abort(403)
+
+            if not file_path.exists() or not file_path.is_file():
+                abort(404)
+
+            self._log(f"Download: {file_path.name}")
+            return send_from_directory(
+                directory=str(file_path.parent),
+                path=file_path.name,
+                as_attachment=True,
+                conditional=True,
+            )
+
+        @app.post("/download")
+        def download_file_post():
+            relpath = request.form.get("target", "")
+            provided = request.form.get("password", "")
+            if not self._is_download_password_valid(provided):
+                flash("Invalid download password")
+                return redirect(request.referrer or url_for("browse", subpath=""))
+
             try:
                 file_path = self._resolve_inside_root(relpath)
             except PermissionError:
@@ -513,13 +645,14 @@ class SharedFolderServer:
 
         return app
 
-    def start(self, folder_path: str, delete_password: str, log_callback):
+    def start(self, folder_path: str, delete_password: str, download_password: str, log_callback):
         if self.is_running:
             self._log("Server is already running")
             return
 
         self.root_dir = os.path.abspath(folder_path)
         self.delete_password = delete_password or ""
+        self.download_password = download_password or ""
         self._log_callback = log_callback
         self._ensure_port_available()
 
