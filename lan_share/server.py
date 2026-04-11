@@ -143,6 +143,9 @@ BROWSE_TEMPLATE = """
       padding: 10px 6px;
       vertical-align: middle;
     }
+    tbody tr:hover {
+      background: #f8fbff;
+    }
     tr:last-child td { border-bottom: 0; }
     .muted { color: var(--muted); }
     .name {
@@ -174,6 +177,19 @@ BROWSE_TEMPLATE = """
     .download button {
       background: #1f7a4f;
     }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .actions input[type="password"] {
+      width: 130px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 0.85rem;
+    }
     .delete input {
       width: 130px;
       border: 1px solid var(--line);
@@ -191,7 +207,17 @@ BROWSE_TEMPLATE = """
     @media (max-width: 640px) {
       form.upload { grid-template-columns: 1fr; }
       .name { max-width: 38vw; }
-      .delete { flex-wrap: wrap; }
+      .delete, .download {
+        width: 100%;
+        margin-right: 0;
+      }
+      .actions input[type="password"] {
+        flex: 1;
+        min-width: 0;
+      }
+      .actions button {
+        flex-shrink: 0;
+      }
     }
   </style>
 </head>
@@ -261,25 +287,39 @@ BROWSE_TEMPLATE = """
               <td class="muted">{{ 'Folder' if item.is_dir else 'File' }}</td>
               <td class="muted">{{ item.size_display }}</td>
               <td>
-                {% if item.is_dir %}
-                  <form class="download" method="post" action="{{ url_for('download_folder_post') }}">
+                <div class="actions">
+                  {% if item.is_dir %}
+                    <form class="download" method="post" action="{{ url_for('download_folder_post') }}">
+                      <input type="hidden" name="target" value="{{ item.rel_path }}" />
+                      {% if needs_download_password %}
+                        <input type="password" name="password" placeholder="Download password" required />
+                      {% else %}
+                        <input type="hidden" name="password" value="" />
+                      {% endif %}
+                      <button type="submit">Download ZIP</button>
+                    </form>
+                  {% else %}
+                    <form class="download" method="post" action="{{ url_for('download_file_post') }}">
+                      <input type="hidden" name="target" value="{{ item.rel_path }}" />
+                      {% if needs_download_password %}
+                        <input type="password" name="password" placeholder="Download password" required />
+                      {% else %}
+                        <input type="hidden" name="password" value="" />
+                      {% endif %}
+                      <button type="submit">Download</button>
+                    </form>
+                  {% endif %}
+                  <form class="delete" method="post" action="{{ url_for('delete_item') }}" onsubmit="return confirm('Delete ' + {{ item.name|tojson }} + '?');">
                     <input type="hidden" name="target" value="{{ item.rel_path }}" />
-                    <input type="password" name="password" placeholder="Download password" />
-                    <button type="submit">Download Folder</button>
+                    <input type="hidden" name="return_to" value="{{ current_rel }}" />
+                    {% if needs_delete_password %}
+                      <input type="password" name="password" placeholder="Delete password" required />
+                    {% else %}
+                      <input type="hidden" name="password" value="" />
+                    {% endif %}
+                    <button type="submit">Delete</button>
                   </form>
-                {% else %}
-                  <form class="download" method="post" action="{{ url_for('download_file_post') }}">
-                    <input type="hidden" name="target" value="{{ item.rel_path }}" />
-                    <input type="password" name="password" placeholder="Download password" />
-                    <button type="submit">Download</button>
-                  </form>
-                {% endif %}
-                <form class="delete" method="post" action="{{ url_for('delete_item') }}" onsubmit="return confirm('Delete ' + {{ item.name|tojson }} + '?');">
-                  <input type="hidden" name="target" value="{{ item.rel_path }}" />
-                  <input type="hidden" name="return_to" value="{{ current_rel }}" />
-                  <input type="password" name="password" placeholder="Delete password" />
-                  <button type="submit">Delete</button>
-                </form>
+                </div>
               </td>
             </tr>
           {% else %}
@@ -531,6 +571,8 @@ class SharedFolderServer:
                 items=items,
                 current_rel=current_rel,
                 parent_rel=parent_rel,
+              needs_download_password=bool(self.download_password),
+              needs_delete_password=bool(self.delete_password),
             )
 
         @app.post("/upload")
