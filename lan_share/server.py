@@ -1,16 +1,20 @@
 import os
 import shutil
 import socket
+import tempfile
 import threading
+import zipfile
 from pathlib import Path
 
 from flask import (
     Flask,
+  after_this_request,
     abort,
     flash,
     redirect,
     render_template_string,
     request,
+  send_file,
     send_from_directory,
     url_for,
 )
@@ -257,7 +261,13 @@ BROWSE_TEMPLATE = """
               <td class="muted">{{ 'Folder' if item.is_dir else 'File' }}</td>
               <td class="muted">{{ item.size_display }}</td>
               <td>
-                {% if not item.is_dir %}
+                {% if item.is_dir %}
+                  <form class="download" method="post" action="{{ url_for('download_folder_post') }}">
+                    <input type="hidden" name="target" value="{{ item.rel_path }}" />
+                    <input type="password" name="password" placeholder="Download password" />
+                    <button type="submit">Download Folder</button>
+                  </form>
+                {% else %}
                   <form class="download" method="post" action="{{ url_for('download_file_post') }}">
                     <input type="hidden" name="target" value="{{ item.rel_path }}" />
                     <input type="password" name="password" placeholder="Download password" />
@@ -463,6 +473,17 @@ class SharedFolderServer:
         finally:
             probe.close()
 
+    def _build_folder_zip(self, folder_path: Path) -> str:
+      temp_file = tempfile.NamedTemporaryFile(prefix="lan_share_", suffix=".zip", delete=False)
+      zip_path = temp_file.name
+      temp_file.close()
+
+      with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+        for path in folder_path.rglob("*"):
+          if path.is_file():
+            archive.write(path, arcname=path.relative_to(folder_path))
+      return zip_path
+
     def _build_app(self) -> Flask:
         app = Flask(__name__)
         app.secret_key = "lan-file-share-secret"
@@ -611,6 +632,40 @@ class SharedFolderServer:
                 directory=str(file_path.parent),
                 path=file_path.name,
                 as_attachment=True,
+                conditional=True,
+            )
+
+        @app.post("/download-folder")
+        def download_folder_post():
+            relpath = request.form.get("target", "")
+            provided = request.form.get("password", "")
+            if not self._is_download_password_valid(provided):
+                flash("Invalid download password")
+                return redirect(request.referrer or url_for("browse", subpath=""))
+
+            try:
+                folder_path = self._resolve_inside_root(relpath)
+            except PermissionError:
+                abort(403)
+
+            if not folder_path.exists() or not folder_path.is_dir():
+                abort(404)
+
+            zip_path = self._build_folder_zip(folder_path)
+
+            @after_this_request
+            def cleanup_zip(response):
+                try:
+                    os.remove(zip_path)
+                except OSError:
+                    pass
+                return response
+
+            self._log(f"Folder download: {folder_path.name}")
+            return send_file(
+                zip_path,
+                as_attachment=True,
+                download_name=f"{folder_path.name}.zip",
                 conditional=True,
             )
 
