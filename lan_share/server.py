@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import socket
 import tempfile
@@ -6,7 +7,7 @@ import threading
 import zipfile
 from pathlib import Path
 
-from pyngrok import ngrok
+from pyngrok import ngrok, conf
 
 from flask import (
     Flask,
@@ -765,7 +766,14 @@ class SharedFolderServer:
 
         if use_tunnel:
             try:
-                self._tunnel = ngrok.connect(self.port)
+                if getattr(sys, 'frozen', False):
+                    base_path = sys._MEIPASS
+                    ngrok_path = os.path.join(base_path, "bin", "ngrok.exe")
+                    pyngrok_config = conf.PyngrokConfig(ngrok_path=ngrok_path)
+                else:
+                    pyngrok_config = conf.PyngrokConfig()
+
+                self._tunnel = ngrok.connect(self.port, pyngrok_config=pyngrok_config)
                 self.tunnel_url = self._tunnel.public_url
                 self._log(f"Public Tunnel initialized at: {self.tunnel_url}")
             except Exception as e:

@@ -93,7 +93,7 @@ pip install pyinstaller
 Build command:
 
 ```powershell
-pyinstaller --noconfirm --onefile --windowed --name LANFolderShare app.py
+pyinstaller --noconfirm --onefile --windowed --add-data "bin/ngrok.exe;bin" --name LANFolderShare app.py
 ```
 
 The executable is generated in the `dist` folder.

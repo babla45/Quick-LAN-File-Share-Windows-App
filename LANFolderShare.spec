@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('bin/ngrok.exe', 'bin')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
