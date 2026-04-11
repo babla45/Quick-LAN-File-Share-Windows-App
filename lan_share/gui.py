@@ -42,7 +42,8 @@ class MainWindow(QMainWindow):
         self.local_ip = detect_local_ip()
         self.selected_folder = ""
         self.config_path = Path.home() / ".lan_folder_share_config.json"
-        self.recent_folders = self._load_recent_folders()
+        self.app_config = self._load_config()
+        self.recent_folders = self.app_config.get("recent_folders", [])
 
         self.log_emitter = LogEmitter()
         self.log_emitter.message.connect(self.append_log)
@@ -103,10 +104,12 @@ class MainWindow(QMainWindow):
         self.url_value.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
         self.delete_password_input = QLineEdit()
+        self.delete_password_input.setText(self.app_config.get("delete_password", ""))
         self.delete_password_input.setPlaceholderText("Optional password required for delete action")
         self.delete_password_input.setEchoMode(QLineEdit.Password)
 
         self.download_password_input = QLineEdit()
+        self.download_password_input.setText(self.app_config.get("download_password", ""))
         self.download_password_input.setPlaceholderText("Optional password required for file download")
         self.download_password_input.setEchoMode(QLineEdit.Password)
 
@@ -189,19 +192,24 @@ class MainWindow(QMainWindow):
     def _log_from_server(self, message: str):
         self.log_emitter.message.emit(message)
 
-    def _load_recent_folders(self):
+    def _load_config(self):
         try:
             if not self.config_path.exists():
-                return []
+                return {}
             data = json.loads(self.config_path.read_text(encoding="utf-8"))
             folders = data.get("recent_folders", [])
             valid_folders = [item for item in folders if isinstance(item, str) and item.strip()]
-            return valid_folders[:8]
+            data["recent_folders"] = valid_folders[:8]
+            return data
         except Exception:
-            return []
+            return {}
 
-    def _save_recent_folders(self):
-        data = {"recent_folders": self.recent_folders[:8]}
+    def _save_config(self):
+        data = {
+            "recent_folders": getattr(self, "recent_folders", [])[:8],
+            "delete_password": self.delete_password_input.text() if hasattr(self, "delete_password_input") else "",
+            "download_password": self.download_password_input.text() if hasattr(self, "download_password_input") else ""
+        }
         self.config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def _add_recent_folder(self, folder: str):
@@ -209,7 +217,7 @@ class MainWindow(QMainWindow):
         self.recent_folders = [item for item in self.recent_folders if Path(item) != Path(normalized)]
         self.recent_folders.insert(0, normalized)
         self.recent_folders = self.recent_folders[:8]
-        self._save_recent_folders()
+        self._save_config()
         self.recent_folder_combo.clear()
         self.recent_folder_combo.addItems(self.recent_folders)
         self.recent_folder_combo.setEnabled(True)
@@ -292,6 +300,7 @@ class MainWindow(QMainWindow):
         self.qr_label.setText("QR code appears when sharing starts")
 
     def closeEvent(self, event):
+        self._save_config()
         if self.server.is_running:
             self.server.stop()
         super().closeEvent(event)
