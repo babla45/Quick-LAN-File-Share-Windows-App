@@ -1,0 +1,99 @@
+Create a Windows desktop application in Python that allows sharing a selected folder over a local network (LAN), so that any phone or device can upload and download files using a web browser (no app installation required).
+
+CORE FEATURES:
+
+1. GUI (PyQt5 preferred, Tkinter acceptable):
+
+* Button: "Select Folder"
+* Label: shows selected folder path
+* Button: "Start Sharing"
+* Button: "Stop Sharing"
+* Display:
+
+  * Local IP address (e.g., 192.168.x.x)
+  * Port (default 8000)
+  * Full URL ([http://IP:PORT](http://IP:PORT))
+* Show QR code for easy mobile access
+* Status indicator (Running / Stopped)
+* Log panel (connections, uploads, errors)
+
+2. Folder Sharing:
+
+* User selects a folder from their PC
+* That folder becomes the root directory for sharing
+* All uploads from phone are saved into this folder
+* Allow browsing subfolders and downloading files
+
+3. Web Interface (for phone browser):
+
+* Clean, mobile-friendly HTML UI
+* Features:
+
+  * Upload file button
+  * List of files and folders
+  * Click to download files
+  * Navigate directories
+* Show file sizes
+* Show upload progress (basic)
+
+4. Backend:
+
+* Use Flask
+* Serve files using efficient streaming (send_from_directory or generator)
+* Handle large file uploads/downloads without loading entire file into memory
+
+5. Networking:
+
+* Run server on host "0.0.0.0"
+* Accessible by any device on same WiFi/LAN
+* Automatically detect and display local IP address
+
+6. Security:
+
+* Restrict access strictly to the selected folder (no path traversal)
+* Optional:
+
+  * Simple password for deletes
+* Sanitize file names before saving
+
+7. Performance:
+
+* Use chunked file transfer
+* Ensure smooth upload/download for large files (100MB+)
+
+8. QR Code:
+
+* Generate QR code of the URL so user can scan from phone and open instantly
+
+9. Threading:
+
+* Run Flask server in a separate thread so GUI remains responsive
+
+10. Packaging:
+
+* Must be compatible with PyInstaller to build a single .exe
+* Avoid unnecessary heavy dependencies
+
+11. Code Quality:
+
+* Modular code:
+
+  * GUI module
+  * Server module
+* Clean structure with comments
+
+OUTPUT:
+
+* Full working code
+* Instructions to run
+* PyInstaller command to generate .exe
+
+IMPORTANT:
+
+* No mobile app required
+* Must work fully offline within same network
+* UI should be simple, clean, and responsive for mobile browsers
+
+
+PyInstaller command:
+pyinstaller --noconfirm --onefile --windowed --name LAN_Folder_Share app.py
