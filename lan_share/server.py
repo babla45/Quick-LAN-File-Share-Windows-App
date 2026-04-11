@@ -6,6 +6,8 @@ import threading
 import zipfile
 from pathlib import Path
 
+from pyngrok import ngrok
+
 from flask import (
     Flask,
   after_this_request,
@@ -436,8 +438,10 @@ class SharedFolderServer:
         self.root_dir = None
         self.delete_password = ""
         self.download_password = ""
+        self.tunnel_url = None
         self._app = None
         self._thread = None
+        self._tunnel = None
         self._log_callback = lambda _msg: None
 
     @property
@@ -742,7 +746,7 @@ class SharedFolderServer:
 
         return app
 
-    def start(self, folder_path: str, delete_password: str, download_password: str, log_callback):
+    def start(self, folder_path: str, delete_password: str, download_password: str, log_callback, use_tunnel: bool = False):
         if self.is_running:
             self._log("Server is already running")
             return
@@ -759,10 +763,27 @@ class SharedFolderServer:
         self._log(f"Sharing started on {self.host}:{self.port}")
         self._log(f"Root folder: {self.root_dir}")
 
+        if use_tunnel:
+            try:
+                self._tunnel = ngrok.connect(self.port)
+                self.tunnel_url = self._tunnel.public_url
+                self._log(f"Public Tunnel initialized at: {self.tunnel_url}")
+            except Exception as e:
+                self._log(f"Failed to start tunnel: {e}")
+
     def stop(self):
         if not self.is_running:
             self._log("Server is not running")
             return
+
+        if self._tunnel:
+            try:
+                ngrok.disconnect(self._tunnel.public_url)
+                ngrok.kill()
+            except Exception:
+                pass
+            self._tunnel = None
+            self.tunnel_url = None
 
         self._thread.shutdown()
         self._thread.join(timeout=3)

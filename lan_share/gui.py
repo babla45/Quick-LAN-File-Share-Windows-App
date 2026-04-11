@@ -8,6 +8,7 @@ from PyQt5.QtCore import QObject, Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -103,6 +104,13 @@ class MainWindow(QMainWindow):
         self.url_value = QLabel()
         self.url_value.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
+        self.tunnel_checkbox = QCheckBox("Enable Public URL (Tunnel)")
+        self.tunnel_checkbox.setChecked(self.app_config.get("use_tunnel", False))
+
+        self.tunnel_url_value = QLabel()
+        self.tunnel_url_value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.tunnel_url_value.hide()
+
         self.delete_password_input = QLineEdit()
         self.delete_password_input.setText(self.app_config.get("delete_password", ""))
         self.delete_password_input.setPlaceholderText("Optional password required for delete action")
@@ -115,7 +123,9 @@ class MainWindow(QMainWindow):
 
         net_layout.addRow("Local IP:", self.ip_value)
         net_layout.addRow("Port:", self.port_input)
-        net_layout.addRow("URL:", self.url_value)
+        net_layout.addRow("Local URL:", self.url_value)
+        net_layout.addRow("", self.tunnel_checkbox)
+        net_layout.addRow("Public URL:", self.tunnel_url_value)
         net_layout.addRow("Delete Password (optional):", self.delete_password_input)
         net_layout.addRow("Download Password (optional):", self.download_password_input)
         root_layout.addWidget(net_group)
@@ -175,15 +185,26 @@ class MainWindow(QMainWindow):
             self.status_value.setStyleSheet(
                 "background: #e7f8ed; color: #1f6f43; padding: 6px; border-radius: 8px; font-weight: 600;"
             )
+            if self.server.tunnel_url:
+                self.tunnel_url_value.setText(self.server.tunnel_url)
+                self.tunnel_url_value.show()
+                self._show_qr(self.server.tunnel_url)
+            else:
+                self.tunnel_url_value.hide()
+                self._show_qr(self.url_value.text())
         else:
             self.status_value.setText("Stopped")
             self.status_value.setStyleSheet(
                 "background: #fdecea; color: #8b1d18; padding: 6px; border-radius: 8px; font-weight: 600;"
             )
+            self.tunnel_url_value.hide()
+            self.qr_label.clear()
+            self.qr_label.setText("QR code appears when sharing starts")
 
         self.start_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
         self.port_input.setEnabled(not running)
+        self.tunnel_checkbox.setEnabled(not running)
 
     def append_log(self, message: str):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -208,7 +229,8 @@ class MainWindow(QMainWindow):
         data = {
             "recent_folders": getattr(self, "recent_folders", [])[:8],
             "delete_password": self.delete_password_input.text() if hasattr(self, "delete_password_input") else "",
-            "download_password": self.download_password_input.text() if hasattr(self, "download_password_input") else ""
+            "download_password": self.download_password_input.text() if hasattr(self, "download_password_input") else "",
+            "use_tunnel": self.tunnel_checkbox.isChecked() if hasattr(self, "tunnel_checkbox") else False
         }
         self.config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -279,15 +301,17 @@ class MainWindow(QMainWindow):
                 delete_password=self.delete_password_input.text().strip(),
                 download_password=self.download_password_input.text().strip(),
                 log_callback=self._log_from_server,
+                use_tunnel=self.tunnel_checkbox.isChecked(),
             )
         except Exception as exc:
             QMessageBox.critical(self, "Failed to Start", f"Could not start server: {exc}")
             self.append_log(f"Start failed: {exc}")
             return
 
-        self._show_qr(self.url_value.text())
+        self._save_config()
         self.set_status(True)
-        self.append_log(f"Open from phone: {self.url_value.text()}")
+        share_url = self.server.tunnel_url if self.server.tunnel_url else self.url_value.text()
+        self.append_log(f"Open from device: {share_url}")
 
     def stop_server(self):
         if not self.server.is_running:
@@ -296,8 +320,6 @@ class MainWindow(QMainWindow):
 
         self.server.stop()
         self.set_status(False)
-        self.qr_label.clear()
-        self.qr_label.setText("QR code appears when sharing starts")
 
     def closeEvent(self, event):
         self._save_config()
