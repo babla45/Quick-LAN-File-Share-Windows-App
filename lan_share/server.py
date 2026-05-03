@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+from datetime import datetime
 import socket
 import tempfile
 import threading
@@ -160,15 +161,17 @@ BROWSE_TEMPLATE = """
       vertical-align: bottom;
     }
     .delete {
-      display: inline-flex;
+      display: flex;
       gap: 6px;
       align-items: center;
+      min-width: 0;
     }
     .download {
-      display: inline-flex;
+      display: flex;
       gap: 6px;
       align-items: center;
-      margin-right: 8px;
+      margin-right: 0;
+      min-width: 0;
     }
     .download input {
       width: 130px;
@@ -181,10 +184,91 @@ BROWSE_TEMPLATE = """
       background: #1f7a4f;
     }
     .actions {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(0, 10.75rem) minmax(0, 6.85rem);
       gap: 8px;
-      flex-wrap: wrap;
+      align-items: stretch;
+      justify-content: start;
+      max-width: 19rem;
+    }
+    .actions .download button,
+    .actions .delete button {
+      width: 100%;
+      box-sizing: border-box;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .table-toolbar {
+      display: flex;
+      justify-content: flex-end;
       align-items: center;
+      margin-bottom: 10px;
+    }
+    .sort-details {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+    }
+    .sort-details summary.sort-btn {
+      list-style: none;
+      cursor: pointer;
+      user-select: none;
+      background: #516071;
+      font-size: 0.82rem;
+      padding: 7px 12px;
+      border-radius: 8px;
+      max-width: 100%;
+      text-align: center;
+    }
+    .sort-details summary.sort-btn::-webkit-details-marker {
+      display: none;
+    }
+    .sort-details summary.sort-btn::after {
+      content: " ▾";
+      font-size: 0.85em;
+      opacity: 0.9;
+    }
+    .sort-current-label {
+      font-weight: 700;
+    }
+    .sort-details summary.sort-btn:hover {
+      background: #3d4a5c;
+    }
+    .sort-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      min-width: 14rem;
+      max-width: min(18rem, 92vw);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 28px rgba(23, 32, 42, 0.14);
+      z-index: 30;
+      padding: 6px 0;
+    }
+    .sort-menu a {
+      display: block;
+      padding: 9px 14px;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 500;
+      border: 0;
+      background: transparent;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .sort-menu a:hover {
+      background: #f0f5fc;
+    }
+    .sort-menu a.active {
+      background: #e8f2ff;
+      font-weight: 700;
     }
     .actions input[type="password"] {
       width: 130px;
@@ -210,16 +294,13 @@ BROWSE_TEMPLATE = """
     @media (max-width: 640px) {
       form.upload { grid-template-columns: 1fr; }
       .name { max-width: 38vw; }
-      .delete, .download {
-        width: 100%;
-        margin-right: 0;
+      .actions {
+        grid-template-columns: 1fr 1fr;
+        max-width: none;
       }
       .actions input[type="password"] {
         flex: 1;
         min-width: 0;
-      }
-      .actions button {
-        flex-shrink: 0;
       }
     }
   </style>
@@ -233,14 +314,15 @@ BROWSE_TEMPLATE = """
 
     <section class="card toolbar">
       <div class="breadcrumb">
-        <a class="btn" href="{{ url_for('browse', subpath='') }}">Root</a>
+        <a class="btn" href="{{ url_for('browse', subpath='', sort=current_sort) }}">Root</a>
         {% if parent_rel is not none %}
-          <a class="btn" href="{{ url_for('browse', subpath=parent_rel) }}">Up</a>
+          <a class="btn" href="{{ url_for('browse', subpath=parent_rel, sort=current_sort) }}">Up</a>
         {% endif %}
       </div>
 
       <form id="uploadForm" class="upload" method="post" action="{{ url_for('upload_file') }}" enctype="multipart/form-data">
         <input type="hidden" name="target" value="{{ current_rel }}" />
+        <input type="hidden" name="sort" value="{{ current_sort }}" />
         <label class="upload-field" for="fileInput">
           <span class="upload-label"> Upload Files Here</span>
           <input type="file" id="fileInput" name="files" multiple />
@@ -268,12 +350,23 @@ BROWSE_TEMPLATE = """
     </section>
 
     <section class="card">
+      <div class="table-toolbar">
+        <details class="sort-details">
+          <summary class="btn sort-btn" title="Choose how files are ordered">Sort: <span class="sort-current-label">{{ current_sort_label }}</span></summary>
+          <nav class="sort-menu" aria-label="Sort options">
+            {% for mode, menu_label in sort_options %}
+              <a href="{{ url_for('browse', subpath=current_rel, sort=mode) }}" class="{% if mode == current_sort %}active{% endif %}">{{ menu_label }}</a>
+            {% endfor %}
+          </nav>
+        </details>
+      </div>
       <table>
         <thead>
           <tr>
             <th>Name</th>
             <th>Type</th>
             <th>Size</th>
+            <th>Modified</th>
             <th>Action</th>
           </tr>
         </thead>
@@ -282,18 +375,20 @@ BROWSE_TEMPLATE = """
             <tr>
               <td>
                 {% if item.is_dir %}
-                  <a href="{{ url_for('browse', subpath=item.rel_path) }}"><span class="name">{{ item.name }}/</span></a>
+                  <a href="{{ url_for('browse', subpath=item.rel_path, sort=current_sort) }}"><span class="name">{{ item.name }}/</span></a>
                 {% else %}
                   <span class="name">{{ item.name }}</span>
                 {% endif %}
               </td>
               <td class="muted">{{ 'Folder' if item.is_dir else 'File' }}</td>
               <td class="muted">{{ item.size_display }}</td>
+              <td class="muted">{{ item.mtime_display }}</td>
               <td>
                 <div class="actions">
                   {% if item.is_dir %}
                     <form class="download" method="post" action="{{ url_for('download_folder_post') }}">
                       <input type="hidden" name="target" value="{{ item.rel_path }}" />
+                      <input type="hidden" name="sort" value="{{ current_sort }}" />
                       {% if needs_download_password %}
                         <input type="password" name="password" placeholder="Download password" required />
                       {% else %}
@@ -304,6 +399,7 @@ BROWSE_TEMPLATE = """
                   {% else %}
                     <form class="download" method="post" action="{{ url_for('download_file_post') }}">
                       <input type="hidden" name="target" value="{{ item.rel_path }}" />
+                      <input type="hidden" name="sort" value="{{ current_sort }}" />
                       {% if needs_download_password %}
                         <input type="password" name="password" placeholder="Download password" required />
                       {% else %}
@@ -315,6 +411,7 @@ BROWSE_TEMPLATE = """
                   <form class="delete" method="post" action="{{ url_for('delete_item') }}" onsubmit="return confirm('Delete ' + {{ item.name|tojson }} + '?');">
                     <input type="hidden" name="target" value="{{ item.rel_path }}" />
                     <input type="hidden" name="return_to" value="{{ current_rel }}" />
+                    <input type="hidden" name="sort" value="{{ current_sort }}" />
                     {% if needs_delete_password %}
                       <input type="password" name="password" placeholder="Delete password" required />
                     {% else %}
@@ -327,7 +424,7 @@ BROWSE_TEMPLATE = """
             </tr>
           {% else %}
             <tr>
-              <td colspan="4" class="muted">This folder is empty.</td>
+              <td colspan="5" class="muted">This folder is empty.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -409,6 +506,65 @@ def format_size(size_bytes: int) -> str:
             return f"{value:.1f} {unit}"
         value /= 1024
     return f"{size_bytes} B"
+
+
+BROWSE_SORT_MODES = ("name_asc", "name_desc", "size_desc", "size_asc", "mtime_desc", "mtime_asc")
+BROWSE_SORT_MENU_LABELS = {
+    "name_asc": "Name A–Z",
+    "name_desc": "Name Z–A",
+    "size_desc": "Size (largest first)",
+    "size_asc": "Size (smallest first)",
+    "mtime_desc": "Modified (newest first)",
+    "mtime_asc": "Modified (oldest first)",
+}
+
+
+def _normalize_browse_sort(sort: str | None) -> str:
+    s = (sort or "name_asc").strip()
+    return s if s in BROWSE_SORT_MODES else "name_asc"
+
+
+def _sort_browse_items(items: list, sort_mode: str) -> None:
+    """Reorder items in place: folders first, then files, each block sorted per sort_mode."""
+    dirs = [x for x in items if x["is_dir"]]
+    files = [x for x in items if not x["is_dir"]]
+    if sort_mode == "name_asc":
+        dirs.sort(key=lambda x: x["name"].lower())
+        files.sort(key=lambda x: x["name"].lower())
+    elif sort_mode == "name_desc":
+        dirs.sort(key=lambda x: x["name"].lower(), reverse=True)
+        files.sort(key=lambda x: x["name"].lower(), reverse=True)
+    elif sort_mode == "size_desc":
+        dirs.sort(key=lambda x: x["name"].lower())
+        files.sort(key=lambda x: (-x["size_bytes"], x["name"].lower()))
+    elif sort_mode == "size_asc":
+        dirs.sort(key=lambda x: x["name"].lower())
+        files.sort(key=lambda x: (x["size_bytes"], x["name"].lower()))
+    elif sort_mode == "mtime_desc":
+        dirs.sort(key=lambda x: (x["mtime"], x["name"].lower()), reverse=True)
+        files.sort(key=lambda x: (x["mtime"], x["name"].lower()), reverse=True)
+    elif sort_mode == "mtime_asc":
+        dirs.sort(key=lambda x: (x["mtime"], x["name"].lower()))
+        files.sort(key=lambda x: (x["mtime"], x["name"].lower()))
+    else:
+        dirs.sort(key=lambda x: x["name"].lower())
+        files.sort(key=lambda x: x["name"].lower())
+    items[:] = dirs + files
+
+
+def format_mtime(ts: float) -> str:
+    try:
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+    except (ValueError, OSError):
+        return "—"
+
+
+def _parent_browse_subpath(relpath: str) -> str:
+    cleaned = (relpath or "").replace("\\", "/").strip("/")
+    if not cleaned:
+        return ""
+    parent = Path(cleaned).parent.as_posix()
+    return "" if parent == "." else parent
 
 
 class FlaskServerThread(threading.Thread):
@@ -550,18 +706,30 @@ class SharedFolderServer:
                 abort(404)
 
             root = Path(self.root_dir).resolve()
+            current_sort = _normalize_browse_sort(request.args.get("sort"))
+            current_sort_label = BROWSE_SORT_MENU_LABELS[current_sort]
+            sort_options = [(m, BROWSE_SORT_MENU_LABELS[m]) for m in BROWSE_SORT_MODES]
+
             items = []
-            for entry in sorted(current_dir.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+            for entry in current_dir.iterdir():
+                st = entry.stat()
                 rel = entry.relative_to(root).as_posix()
-                size_display = "-" if entry.is_dir() else format_size(entry.stat().st_size)
+                is_dir = entry.is_dir()
+                size_bytes = 0 if is_dir else st.st_size
+                size_display = "-" if is_dir else format_size(size_bytes)
+                mtime = st.st_mtime
                 items.append(
                     {
                         "name": entry.name,
-                        "is_dir": entry.is_dir(),
+                        "is_dir": is_dir,
                         "rel_path": rel,
                         "size_display": size_display,
+                        "size_bytes": size_bytes,
+                        "mtime": mtime,
+                        "mtime_display": format_mtime(mtime),
                     }
                 )
+            _sort_browse_items(items, current_sort)
 
             current_rel = current_dir.relative_to(root).as_posix()
             if current_rel == ".":
@@ -576,13 +744,17 @@ class SharedFolderServer:
                 items=items,
                 current_rel=current_rel,
                 parent_rel=parent_rel,
-              needs_download_password=bool(self.download_password),
-              needs_delete_password=bool(self.delete_password),
+                current_sort=current_sort,
+                current_sort_label=current_sort_label,
+                sort_options=sort_options,
+                needs_download_password=bool(self.download_password),
+                needs_delete_password=bool(self.delete_password),
             )
 
         @app.post("/upload")
         def upload_file():
             target = request.form.get("target", "")
+            sort = _normalize_browse_sort(request.form.get("sort"))
             try:
                 destination_dir = self._resolve_inside_root(target)
             except PermissionError:
@@ -590,7 +762,7 @@ class SharedFolderServer:
 
             if not destination_dir.exists() or not destination_dir.is_dir():
                 flash("Invalid target folder")
-                return redirect(url_for("browse", subpath=""))
+                return redirect(url_for("browse", subpath="", sort=sort))
 
             uploads = [
                 item
@@ -599,7 +771,7 @@ class SharedFolderServer:
             ]
             if not uploads:
                 flash("No files selected")
-                return redirect(url_for("browse", subpath=target))
+                return redirect(url_for("browse", subpath=target, sort=sort))
 
             uploaded_count = 0
             skipped_count = 0
@@ -634,7 +806,7 @@ class SharedFolderServer:
             else:
                 flash(f"Uploaded {uploaded_count} file(s)")
 
-            return redirect(url_for("browse", subpath=target))
+            return redirect(url_for("browse", subpath=target, sort=sort))
 
         @app.route("/download/<path:relpath>")
         def download_file(relpath: str):
@@ -662,9 +834,11 @@ class SharedFolderServer:
         def download_file_post():
             relpath = request.form.get("target", "")
             provided = request.form.get("password", "")
+            sort = _normalize_browse_sort(request.form.get("sort"))
             if not self._is_download_password_valid(provided):
                 flash("Invalid download password")
-                return redirect(request.referrer or url_for("browse", subpath=""))
+                parent = _parent_browse_subpath(relpath)
+                return redirect(url_for("browse", subpath=parent, sort=sort))
 
             try:
                 file_path = self._resolve_inside_root(relpath)
@@ -686,9 +860,11 @@ class SharedFolderServer:
         def download_folder_post():
             relpath = request.form.get("target", "")
             provided = request.form.get("password", "")
+            sort = _normalize_browse_sort(request.form.get("sort"))
             if not self._is_download_password_valid(provided):
                 flash("Invalid download password")
-                return redirect(request.referrer or url_for("browse", subpath=""))
+                parent = _parent_browse_subpath(relpath)
+                return redirect(url_for("browse", subpath=parent, sort=sort))
 
             try:
                 folder_path = self._resolve_inside_root(relpath)
@@ -721,10 +897,11 @@ class SharedFolderServer:
             target = request.form.get("target", "")
             return_to = request.form.get("return_to", "")
             provided = request.form.get("password", "")
+            sort = _normalize_browse_sort(request.form.get("sort"))
 
             if self.delete_password and provided != self.delete_password:
                 flash("Invalid delete password")
-                return redirect(url_for("browse", subpath=return_to))
+                return redirect(url_for("browse", subpath=return_to, sort=sort))
 
             try:
                 item = self._resolve_inside_root(target)
@@ -733,7 +910,7 @@ class SharedFolderServer:
 
             if not item.exists():
                 flash("Item does not exist")
-                return redirect(url_for("browse", subpath=return_to))
+                return redirect(url_for("browse", subpath=return_to, sort=sort))
 
             if item.is_dir():
                 shutil.rmtree(item)
@@ -743,7 +920,7 @@ class SharedFolderServer:
                 self._log(f"Deleted file: {item.name}")
 
             flash(f"Deleted {item.name}")
-            return redirect(url_for("browse", subpath=return_to))
+            return redirect(url_for("browse", subpath=return_to, sort=sort))
 
         return app
 
