@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='LANFolderShare',
+    name='LAN_Folder_Share_Fixed',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

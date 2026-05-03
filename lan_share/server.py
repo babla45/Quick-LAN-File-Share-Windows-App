@@ -9,6 +9,17 @@ import zipfile
 from pathlib import Path
 
 from pyngrok import ngrok, conf
+import pyngrok.process
+import subprocess
+import os
+
+# Monkey-patch to hide ngrok console window on Windows
+original_popen = pyngrok.process.subprocess.Popen
+def popen_wrapper(*args, **kwargs):
+    if os.name == 'nt':
+        kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+    return original_popen(*args, **kwargs)
+pyngrok.process.subprocess.Popen = popen_wrapper
 
 from flask import (
     Flask,
